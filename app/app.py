@@ -4,11 +4,9 @@ Run from project root:
     streamlit run app/app.py
 """
 
-from __future__ import annotations
-
 import csv
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -79,7 +77,7 @@ def _save_feedback(
             writer.writeheader()
         writer.writerow(
             {
-                "timestamp": datetime.now(datetime.UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "query": query,
                 "mode": mode,
                 "parent_asin": parent_asin,
@@ -100,10 +98,6 @@ def _run_search(query: str, mode: str, k: int = 3) -> list[dict]:
     bm25 = _load_bm25()
 
     if semantic is None:
-        st.error(
-            "Semantic index not found. Build it first by running:\n\n"
-            "```\npython src/semantic.py\n```"
-        )
         return []
 
     if mode == "Semantic":
@@ -129,7 +123,7 @@ def _run_search(query: str, mode: str, k: int = 3) -> list[dict]:
     if bm25_scores:
         mn, mx = min(bm25_scores.values()), max(bm25_scores.values())
         denom = mx - mn if mx != mn else 1.0
-        bm25_scores = {k: (v - mn) / denom for k, v in bm25_scores.items()}
+        bm25_scores = {asin: (v - mn) / denom for asin, v in bm25_scores.items()}
 
     # Normalize semantic scores (FAISS L2 → lower is better, invert)
     sem_scores = {r["parent_asin"]: r["score"] for r in sem_results}
@@ -137,7 +131,7 @@ def _run_search(query: str, mode: str, k: int = 3) -> list[dict]:
         mn, mx = min(sem_scores.values()), max(sem_scores.values())
         denom = mx - mn if mx != mn else 1.0
         # For L2 distance, smaller = better → invert normalization
-        sem_scores = {k: 1.0 - (v - mn) / denom for k, v in sem_scores.items()}
+        sem_scores = {asin: 1.0 - (v - mn) / denom for asin, v in sem_scores.items()}
 
     # Merge by asin
     all_asins = set(bm25_scores) | set(sem_scores)
@@ -181,12 +175,20 @@ def main() -> None:
 
     search_clicked = st.button("Search", type="primary")
 
+    if _load_semantic() is None:
+        st.error(
+            "Semantic index not found. Build it first by running:\n\n"
+            "```\npython src/semantic.py\n```"
+        )
+        return
+
     if search_clicked and query.strip():
         with st.spinner("Searching…"):
             results = _run_search(query.strip(), mode, k=3)
 
         if not results:
             st.info("No results found.")
+            st.session_state.pop("results", None)
             return
 
         asins = [r["parent_asin"] for r in results]
@@ -194,7 +196,9 @@ def main() -> None:
             asins, parquet_path=ROOT / "data" / "processed" / "reviews.parquet"
         )
         st.session_state["results"] = results
-        st.session_state["reviews_map"] = reviews_df.set_index("parent_asin").to_dict(orient="index")
+        st.session_state["reviews_map"] = reviews_df.set_index("parent_asin").to_dict(
+            orient="index"
+        )
         st.session_state["search_query"] = query.strip()
         st.session_state["search_mode"] = mode
 
@@ -219,9 +223,7 @@ def main() -> None:
         review_info = reviews_map.get(asin, {})
         review_text = review_info.get("review_text", "")
         if review_text:
-            review_text = review_text[:200] + (
-                "…" if len(review_text) > 200 else ""
-            )
+            review_text = review_text[:200] + ("…" if len(review_text) > 200 else "")
 
         with st.container(border=True):
             col1, col2 = st.columns([4, 1])
