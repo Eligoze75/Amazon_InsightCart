@@ -14,6 +14,13 @@ dependencies:
   - pip:
     - langchain-community
     - langchain-core
+    - sentence-transformers
+    - faiss-cpu
+    - streamlit
+    - nltk
+    - duckdb
+    - langchain-huggingface
+    - datasets
   - jupyterlab
   - ipykernel
   - ipywidgets
