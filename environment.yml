@@ -16,6 +16,13 @@ dependencies:
     - langchain-community
     - langchain-core
     - rank_bm25
+    - sentence-transformers
+    - faiss-cpu
+    - streamlit
+    - nltk
+    - duckdb
+    - langchain-huggingface
+    - datasets
   - jupyterlab
   - ipykernel
   - ipywidgets

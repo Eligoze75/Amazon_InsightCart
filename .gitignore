@@ -418,6 +418,8 @@ FodyWeavers.xsd
 *.msp
 
 # data
+data/*.csv
 data/raw/*
 data/processed/*
 data/context_store/*
+/.claude
