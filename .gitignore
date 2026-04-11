@@ -418,5 +418,7 @@ FodyWeavers.xsd
 *.msp
 
 # data
+data/*.csv
 data/raw/*
 data/processed/*
+/.claude
