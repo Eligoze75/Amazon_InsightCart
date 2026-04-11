@@ -5,6 +5,7 @@ channels:
 dependencies:
   - python=3.12
   - pandas
+  - pyarrow
   - numpy
   - scipy
   - matplotlib
@@ -14,6 +15,7 @@ dependencies:
   - pip:
     - langchain-community
     - langchain-core
+    - rank_bm25
   - jupyterlab
   - ipykernel
   - ipywidgets

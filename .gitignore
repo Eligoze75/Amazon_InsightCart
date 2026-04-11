@@ -420,3 +420,4 @@ FodyWeavers.xsd
 # data
 data/raw/*
 data/processed/*
+data/context_store/*
