@@ -23,6 +23,7 @@ dependencies:
     - duckdb
     - langchain-huggingface
     - datasets
+    - anthropic
   - jupyterlab
   - ipykernel
   - ipywidgets
