@@ -6,6 +6,8 @@ import json
 import logging
 from pathlib import Path
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 LOGGER = logging.getLogger(__name__)
 
@@ -15,6 +17,11 @@ META_DROP_COLS = ["bought_together", "subtitle", "author", "images", "videos"]
 REVIEWS_PATH = Path(__file__).resolve().parent.parent / "data" / "raw" / "Video_Games.jsonl"
 META_PATH = Path(__file__).resolve().parent.parent / "data" / "raw" / "meta_Video_Games.jsonl"
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "merged_reviews.parquet"
+
+CHUNK_SIZE = 500_000
+PARQUET_COMPRESSION = "snappy"
+USE_SMALLER_SAMPLE = True
+START_DATE = "2022-06-01"
 
 
 def _safe_drop(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
@@ -139,12 +146,26 @@ def _build_text_faiss(row: pd.Series) -> str:
     return " ".join(p for p in parts if p)
 
 
+def _metadata_json_blob(row: pd.Series) -> str:
+    """Serializes all fields except text_bm25/text_faiss for LangChain Document.metadata."""
+    data: dict[str, object] = {}
+    for k, v in row.items():
+        if k in ("text_bm25", "text_faiss"):
+            continue
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            data[k] = None
+        else:
+            data[k] = v
+    return json.dumps(data, ensure_ascii=False, default=str)
+
+
 def add_text_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Adds text_bm25 and text_faiss columns (same row, two retriever-specific strings)."""
+    """Adds text columns and keeps doc_id as a first-class parquet column."""
     out = df.copy()
     out["text_bm25"] = out.apply(_build_text_bm25, axis=1)
     out["text_faiss"] = out.apply(_build_text_faiss, axis=1)
-    return out[["text_bm25", "text_faiss", "details"]]
+    out["details"] = out.apply(_metadata_json_blob, axis=1)
+    return out[["doc_id", "text_bm25", "text_faiss", "details"]]
 
 
 def assign_doc_ids(df: pd.DataFrame) -> pd.DataFrame:
@@ -162,37 +183,76 @@ def assign_doc_ids(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def load_and_merge() -> pd.DataFrame:
-    """Loads JSONL files, drops columns, renames titles, merges on parent_asin."""
-    df = pd.read_json(REVIEWS_PATH, lines=True)
-    df = _safe_drop(df, REV_DROP_COLS)
-    df = df.rename(columns={"title": "review_title"})
-    LOGGER.info("Reviews dataset loaded (%s rows)", len(df))
-
+def load_metadata() -> pd.DataFrame:
+    """Loads metadata JSONL once: drop columns and rename product title."""
     df_meta = pd.read_json(META_PATH, lines=True)
     df_meta = _safe_drop(df_meta, META_DROP_COLS)
     df_meta = df_meta.rename(columns={"title": "product_post_title"})
     LOGGER.info("Metadata dataset loaded (%s rows)", len(df_meta))
-
-    merged = df_meta.merge(df, on="parent_asin", how="left")
-    return merged
+    return df_meta
 
 
-def run_etl() -> pd.DataFrame:
-    """Loads, merges, formats, builds text columns, writes parquet."""
+def prepare_reviews_chunk(df: pd.DataFrame) -> pd.DataFrame:
+    """Drops columns and renames review title column."""
+    df = _safe_drop(df, REV_DROP_COLS)
+    if USE_SMALLER_SAMPLE:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        cond = df["timestamp"] > pd.to_datetime(START_DATE)
+        df = df[cond]
+    LOGGER.info("Filtered reviews to %s rows", len(df))
+    return df.rename(columns={"title": "review_title"})
+
+
+def process_merged_chunk(merged: pd.DataFrame) -> pd.DataFrame:
+    """Formats columns, assigns doc_id, then text columns + packed metadata (`details`)."""
+    merged = format_merged_columns(merged)
+    merged = assign_doc_ids(merged)
+    return add_text_columns(merged)
+
+
+def run_etl() -> int:
+    """Stream review chunks, merge with metadata, write one Parquet file. Returns total rows."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    merged = load_and_merge()
-    LOGGER.info("Merged shape: %s", merged.shape)
-
-    merged = format_merged_columns(merged)
-    merged = add_text_columns(merged)
-    merged = assign_doc_ids(merged)
-
+    df_meta = load_metadata()
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_parquet(OUTPUT_PATH, index=False)
-    LOGGER.info("Wrote %s", OUTPUT_PATH)
-    return merged
+    if OUTPUT_PATH.exists():
+        OUTPUT_PATH.unlink()
+
+    # `writer`: open Parquet file. `ref_schema`: column types from chunk 1; later chunks cast.
+    writer = None
+    ref_schema = None
+    total = 0
+
+    try:
+        chunks = pd.read_json(REVIEWS_PATH, lines=True, chunksize=CHUNK_SIZE)
+        for i, chunk in enumerate(chunks):
+            merged = df_meta.merge(
+                prepare_reviews_chunk(chunk), on="parent_asin", how="left"
+            )
+            merged = process_merged_chunk(merged)
+            table = pa.Table.from_pandas(merged, preserve_index=False)
+
+            if writer is None:
+                ref_schema = table.schema
+                writer = pq.ParquetWriter(
+                    OUTPUT_PATH, ref_schema, compression=PARQUET_COMPRESSION
+                )
+            else:
+                table = table.cast(ref_schema)
+
+            writer.write_table(table)
+            total += len(merged)
+            LOGGER.info("chunk %s: +%s rows (total %s)", i + 1, len(merged), total)
+    finally:
+        if writer:
+            writer.close()
+
+    if total == 0:
+        raise RuntimeError("No rows written.")
+
+    LOGGER.info("Wrote %s rows -> %s", total, OUTPUT_PATH)
+    return total
 
 
 if __name__ == "__main__":
