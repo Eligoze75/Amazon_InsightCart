@@ -6,17 +6,20 @@ dependencies:
   - python=3.12
   - pandas
   - pyarrow
-  - numpy
+  - numpy>=1.26,<2
   - scipy
   - matplotlib
   - seaborn
   - spacy
+  - pytorch>=2.4,<3
   - pip
   - pip:
     - langchain-community
     - langchain-core
+    - langchain-text-splitters>=0.3.0
     - rank_bm25
-    - sentence-transformers
+    - sentence-transformers>=2.2.0,<3.0.0
+    - transformers>=4.41.0,<5
     - faiss-cpu
     - streamlit
     - nltk
