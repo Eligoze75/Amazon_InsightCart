@@ -1,102 +1,153 @@
-# Smart Amazon Product Query Assistant (Video Games)
+# Smart Amazon Video Games Product Search
 
-Welcome! This repository is part of a UBC MDS project that builds a retrieval style assistant for **Amazon video game products**. The goal is to combine review text and product metadata so that queries can be answered with relevant, grounded context. The pipeline uses query expansion, lexical search with BM25, dense search with FAISS, and reciprocal rank fusion to merge results in a sensible way.
+A retrieval-style search assistant over Amazon Video Games product data. Users submit natural language queries; the system retrieves relevant products using lexical search (BM25), dense semantic search (FAISS), or a hybrid of both — optionally with Claude-powered query expansion.
+
+<details>
+<summary>Pipeline Architecture</summary>
 
 ![Pipeline Architecture](img/architecture.png)
 
-## Objective
+</details>
 
-We are building a RAG oriented workflow: users makes questions about video games, we retrieve supporting passages from processed reviews and metadata, and later stages can use that context with a language model. This milestone focuses on data preparation, offline indices, hybrid retrieval, and the app MVP. The scope is **only the Video Games category** from the public Amazon Reviews 2023 release.
+---
 
-## Data you need
+## Setup
 
-Download the **reviews** and **metadata** JSONL files for the category you care about from the official site:
+### 1. Download the raw data
 
-[https://amazon-reviews-2023.github.io/](https://amazon-reviews-2023.github.io/)
+Download the **Video Games** category files from [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/) and place them here:
 
-For this project, use the **Video Games** files and place them here:
+```
+data/raw/
+├── Video_Games.jsonl          # 4.6M customer reviews
+└── meta_Video_Games.jsonl     # 137K product listings
+```
 
-* `data/raw/Video_Games.jsonl` (reviews)
-* `data/raw/meta_Video_Games.jsonl` (metadata)
-
-File names must match what `src/preprocess.py` expects. If you are new to the dataset, the site also links the paper and Hugging Face options for loading data.
-
-## Faster runs for testing
-
-ETL can take a long time on the full reviews file. In `src/preprocess.py`, the flag `USE_SMALLER_SAMPLE` is available. When it is `True`, reviews are filtered to timestamps **after** `START_DATE` (see the same file), which keeps runs smaller and faster for quick experiments. Set `USE_SMALLER_SAMPLE` to `False` when you want the full filtered pipeline for serious indexing.
-
-## Conda environment
-
-Create and activate the environment from the repo root:
+### 2. Create the conda environment
 
 ```bash
 conda env create -f environment.yml
 conda activate 575_jleg_rag_env
 ```
 
-This installs Python 3.12, pandas, PyArrow, PyTorch (conda), and pip packages for LangChain, FAISS, sentence transformers, BM25, Anthropic, DuckDB, Jupyter, and more.
+### 3. Build the pipeline
 
--> Copy `.env.example` to `.env` and add your `ANTHROPIC_API_KEY`.
+Run scripts from the project root in order:
 
-## Where we are today
+```bash
+# Step 1 — ETL: merge + aggregate → 137K product parquet
+python src/preprocess.py
 
-**Done or in place**
+# Step 2 — Build indices (order does not matter, can run in parallel)
+python src/bm25.py       # BM25 index  → context_store/bm25_retriever.pkl
+python src/semantic.py   # FAISS index → context_store/faiss_index/
+```
 
-* ETL from raw JSONL to `data/processed/merged_reviews.parquet` with `doc_id`, `text_bm25`, and `text_faiss`
-* LangChain document helpers in `src/documents.py`
-* BM25 index build and pickle in `src/bm25.py`
-* FAISS index build in `src/semantic.py`
-* Query expansion with Claude Haiku in `src/query_expansion.py`
-* Hybrid retrieval with RRF in `src/hybrid.py` (BM25 and FAISS lists fused per query, then across expanded queries)
+### 4. Run the app
 
-**What are we planning for next milestone**
+```bash
+streamlit run app/app.py
+```
 
-* Cross encoder reranking
-* A single `retrieve_context` bundle API module (planned next)
-* Final answer generation with a LLM
+Add your `ANTHROPIC_API_KEY` to `.env` to enable query expansion (optional).
 
-## Local test: hybrid search
+---
 
-After preprocessing and building both indices, run a hybrid retrieval from the project root. This uses the merged table to attach the canonical `text_faiss` passage to each hit.
+## Scripts
 
-1. Process data (adjust `USE_SMALLER_SAMPLE` if needed):
+| Script | Purpose | Input | Output |
+|---|---|---|---|
+| `src/preprocess.py` | ETL — merge raw JSONL into product parquet | `data/raw/*.jsonl` | `data/processed/merged_reviews.parquet` |
+| `src/bm25.py` | Build BM25 index | `merged_reviews.parquet` | `context_store/bm25_retriever.pkl` |
+| `src/semantic.py` | Build FAISS index | `merged_reviews.parquet` | `context_store/faiss_index/` |
+| `src/hybrid.py` | Hybrid retrieval with RRF fusion | FAISS + BM25 indices | `list[dict]` hits |
+| `src/query_expansion.py` | Rewrite queries with Claude Haiku | user query | paraphrases |
+| `src/documents.py` | Convert DataFrame rows to LangChain Documents | DataFrame | `list[Document]` |
+| `app/app.py` | Streamlit search UI | indices | search results |
 
-   ```bash
-   python src/preprocess.py
-   ```
+---
 
-2. Build BM25 and FAISS (order can be either):
+## Design Decisions
 
-   ```bash
-   python src/bm25.py
-   python src/semantic.py
-   ```
+### 1. Product-level index (137K rows, not 4.6M)
 
-3. Run the hybrid CLI (example without query expansion so no API key is required):
+The raw dataset has 4.6M reviews but only 137K unique products. Indexing at the review level creates 33× more documents with no retrieval benefit for product search — users search for products, not individual reviews.
 
-   ```bash
-   python src/hybrid.py "best Nintendo console under 300" --mode hybrid --top-k 5 --no-expand
-   ```
+**Decision:** aggregate the top-10 most helpful reviews per product (by `helpful_vote`) into a single text field, then join with product metadata. One row = one product.
 
-   If you want Claude to rewrite the query first, run without the flag that skips expansion and put your API key in `.env`.
+**Trade-off:** individual review granularity is lost, but retrieval speed and index size improve by ~33×. The top-10 reviews still carry the most informative signal.
 
-You should see printed queries used, ranks, scores, and short **content** snippets from retrieval.
+### 2. Two text columns per product
 
-## Exploration and EDA
+Each product has two purpose-built text representations:
 
-For charts, schema notes, and exploratory context on the merged data, take a look to `notebooks/milestone1_exploration.ipynb`. It is a good companion when you interpret retrieval behavior or tune preprocessing.
+- **`text_bm25`** — structured keyword template (`Product title: ... Features: ... Customer reviews: ...`). Designed for BM25's term-frequency scoring: field labels anchor important terms.
+- **`text_faiss`** — short narrative prose (`Product: ... Sold by ... Rating: ... Customer reviews: ...`). Designed for dense embeddings: reads naturally so the sentence model produces meaningful vectors.
 
-## Dependencies (summary)
+Both columns are built entirely in DuckDB SQL during preprocessing — no pandas row iteration.
 
-Core stack: **Python 3.12**, **pandas**, **PyArrow**, **NumPy**, **SciPy**, **PyTorch** (conda), **matplotlib**, **seaborn**, **spaCy**, **JupyterLab**.
+### 3. DuckDB for ETL
 
-Retrieval and NLP (pip): **langchain community**, **langchain core**, **langchain text splitters**, **langchain huggingface**, **rank_bm25**, **sentence transformers**, **transformers**, **faiss cpu**, **anthropic**, **duckdb**, **nltk**, **datasets**, **python dotenv**.
+All preprocessing runs inside a single SQL statement via DuckDB. This avoids loading 4.6M rows into pandas and eliminates slow `df.apply(axis=1)` calls. DuckDB executes the join, array flattening, aggregation, string building, and parquet write in one vectorised pass.
 
-## Next milestone (preview)
+### 4. Hybrid retrieval with RRF
 
-The next steps aim to add **cross encoder reranking** on a bounded candidate pool, then a small **pipeline** module that returns a structured context bundle (original query, expanded queries, top passages with metadata) ready for an answer model. Final answer generation may remain out of scope until a later milestone.
+Search supports three modes:
+
+- **Semantic** — FAISS L2 distance on `all-MiniLM-L6-v2` embeddings of `text_faiss`
+- **BM25** — LangChain BM25Retriever over tokenised `text_bm25`
+- **Hybrid** — Reciprocal Rank Fusion (RRF, k=60) merges BM25 and FAISS ranked lists per query, then across expanded queries
+
+RRF was chosen over score normalisation because it is robust to score scale differences between retrievers and does not require tuning a mixing weight.
+
+### 5. Query expansion with Claude Haiku
+
+Before retrieval, Claude Haiku rewrites the user query into 3 paraphrases. Each paraphrase is retrieved independently; results are fused with RRF across queries. This improves recall for queries that use different vocabulary than the product text (e.g. "cheap controller" vs "budget gamepad").
+
+Query expansion is optional — the app can run without an API key by unchecking the checkbox.
+
+### 6. Metadata embedded in index documents
+
+Each FAISS and BM25 document stores `parent_asin`, `product_title`, `average_rating`, `rating_number`, and `review_texts` in its metadata. Search results therefore carry all display fields without a secondary parquet lookup at query time.
+
+---
+
+## Project Structure
+
+```
+├── data/
+│   ├── raw/                        # downloaded JSONL files (not tracked)
+│   └── processed/
+│       └── merged_reviews.parquet  # 137K product rows (built by preprocess.py)
+│
+├── │   ├── context_store/
+│   │   ├── bm25_retriever.pkl      # pickled BM25 index
+│   │   └── faiss_index/            # FAISS index files
+│
+├── src/
+│   ├── preprocess.py               # ETL
+│   ├── bm25.py                     # BM25 index build
+│   ├── semantic.py                 # FAISS index build + SemanticRetriever
+│   ├── hybrid.py                   # RRF fusion + search entry point
+│   ├── query_expansion.py          # Claude Haiku query rewriting
+│   └── documents.py                # DataFrame → LangChain Document helper
+│
+├── app/
+│   └── app.py                      # Streamlit UI
+│
+├── notebooks/
+│   └── milestone1_exploration.ipynb
+│
+├── results/
+│   └── milestone1_discussion.md
+│
+├── environment.yml
+└── README.md
+```
+
+---
 
 ## Contributors
 
-* **Eli Gonzalez**
-* **Jackson Lu**
+- **Eli Gonzalez**
+- **Jackson Lu**
