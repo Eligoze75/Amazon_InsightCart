@@ -24,7 +24,7 @@ from src.documents import dataframe_to_documents  # noqa: E402
 LOGGER = logging.getLogger(__name__)
 
 PROCESSED_PARQUET  = _ROOT / "data" / "processed" / "merged_reviews.parquet"
-FAISS_INDEX_DIR    = _ROOT / "context_store" / "faiss_index"
+FAISS_INDEX_DIR    = _ROOT / "data" / "context_store" / "faiss_index"
 EMBEDDING_MODEL    = "sentence-transformers/all-MiniLM-L6-v2"
 
 # Columns stored in each Document's metadata — returned by search() and used

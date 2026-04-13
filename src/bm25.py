@@ -17,7 +17,7 @@ LOGGER = logging.getLogger(__name__)
 
 _ROOT             = Path(__file__).resolve().parent.parent
 PROCESSED_PARQUET = _ROOT / "data" / "processed" / "merged_reviews.parquet"
-BM25_INDEX_PATH   = _ROOT / "context_store" / "bm25_retriever.pkl"
+BM25_INDEX_PATH   = _ROOT / "data" / "context_store" / "bm25_retriever.pkl"
 BM25_K            = 3
 
 # Columns stored in each Document's metadata — returned by hybrid search

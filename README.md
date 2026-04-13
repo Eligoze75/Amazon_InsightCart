@@ -120,9 +120,9 @@ Each FAISS and BM25 document stores `parent_asin`, `product_title`, `average_rat
 │   └── processed/
 │       └── merged_reviews.parquet  # 137K product rows (built by preprocess.py)
 │
-├── context_store/
-│   ├── bm25_retriever.pkl          # pickled BM25 index
-│   └── faiss_index/                # FAISS index files
+├── │   ├── context_store/
+│   │   ├── bm25_retriever.pkl      # pickled BM25 index
+│   │   └── faiss_index/            # FAISS index files
 │
 ├── src/
 │   ├── preprocess.py               # ETL

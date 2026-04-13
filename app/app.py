@@ -30,7 +30,7 @@ FEEDBACK_HEADERS = ["timestamp", "query", "mode", "parent_asin", "title", "feedb
 
 @st.cache_resource(show_spinner="Loading semantic index…")
 def _load_semantic() -> SemanticRetriever | None:
-    index_dir = ROOT / "context_store" / "faiss_index"
+    index_dir = ROOT / "data" / "context_store" / "faiss_index"
     if not (index_dir / "index.faiss").exists():
         return None
     r = SemanticRetriever(index_dir=index_dir)
