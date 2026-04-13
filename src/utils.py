@@ -1,6 +1,11 @@
-"""Shared utilities for corpus building, tokenization, and data loading."""
+"""Auxiliary ETL and helpers for legacy app artifacts.
 
-import string
+Produces ``metadata_clean.parquet`` and ``reviews.parquet`` when run as a script;
+the Streamlit app uses ``lookup_reviews`` against ``reviews.parquet``. The
+canonical merged table for BM25/FAISS is built by ``preprocess.py``
+(``merged_reviews.parquet``).
+"""
+
 import duckdb
 import pandas as pd
 from pathlib import Path
@@ -52,28 +57,6 @@ def save_reviews_parquet(
     )
 
 
-def build_corpus(df_meta: pd.DataFrame) -> list[str]:
-    """Build one text document per product for indexing.
-
-    Concatenates: title + space-joined features + space-joined description.
-    Handles both list and string column values gracefully.
-    """
-
-    def _join_list_col(series: pd.Series) -> pd.Series:
-        """Join list-valued cells into a single string per row."""
-        return series.apply(
-            lambda val: (
-                " ".join(str(v) for v in val if v) if isinstance(val, list) else ""
-            )
-        )
-
-    titles = df_meta["title"].fillna("")
-    features = _join_list_col(df_meta["features"])
-    descriptions = _join_list_col(df_meta["description"])
-
-    return (titles + " " + features + " " + descriptions).str.strip().tolist()
-
-
 def lookup_reviews(
     parent_asins: list[str],
     parquet_path: str | Path = REVIEWS_PARQUET,
@@ -105,7 +88,10 @@ def lookup_reviews(
 
 
 def main() -> None:
-    """Process raw JSONL files into processed parquet files.
+    """Write metadata_clean.parquet and reviews.parquet from raw JSONL.
+
+    Optional alongside ``preprocess.py``; needed if you use ``lookup_reviews``
+    with the default ``reviews.parquet`` path.
 
     Run from the project root:
         python src/utils.py
