@@ -1,4 +1,9 @@
-"""Anthropic-based query rewriting for retrieval (Claude Haiku)."""
+"""Anthropic-based query rewriting for retrieval (Claude Haiku).
+
+Used by retrieval pipelines and the Streamlit app. Set ``ANTHROPIC_API_KEY``
+(see ``.env.example``). Set ``DEFAULT_MODEL`` to a Haiku model id your key can
+call (e.g. ``claude-3-5-haiku-latest`` or a dated snapshot).
+"""
 
 from __future__ import annotations
 
@@ -7,12 +12,13 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-3-5-haiku-20241022"
+DEFAULT_MODEL = "claude-3-5-haiku-latest"
 DEFAULT_NUM_VARIANTS = 3
 MAX_TOKENS = 1024
 
