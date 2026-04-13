@@ -1,61 +1,69 @@
-"""Semantic retriever using sentence-transformers + LangChain FAISS."""
+"""FAISS semantic index over merged reviews (text_faiss) via LangChain."""
 
 from __future__ import annotations
 
+import logging
+import sys
 from pathlib import Path
 
 import pandas as pd
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
-INDEX_DIR = Path("data/processed/faiss_index")
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+from documents import dataframe_to_documents
+
+LOGGER = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROCESSED_PARQUET = _PROJECT_ROOT / "data" / "processed" / "merged_reviews.parquet"
+FAISS_INDEX_DIR = _PROJECT_ROOT / "context_store" / "faiss_index"
+# Same embedding model must be used for build and load; documented in README.
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+def load_processed_dataframe(parquet_path: Path | None = None) -> pd.DataFrame:
+    """Loads only FAISS text plus stable id (no packed details JSON)."""
+    path = parquet_path or PROCESSED_PARQUET
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Missing processed parquet: {path}. Run src/preprocess.py first."
+        )
+    return pd.read_parquet(path, columns=["text_faiss", "doc_id"])
+
+
+def _make_embeddings() -> HuggingFaceEmbeddings:
+    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
 
 
 class SemanticRetriever:
-    """Build and query a FAISS vector index via LangChain."""
+    """Builds, persists, and queries a FAISS store over text_faiss Documents."""
 
-    def __init__(self, index_dir: str | Path = INDEX_DIR) -> None:
-        self.index_dir = Path(index_dir)
+    def __init__(self, index_dir: Path | str | None = None) -> None:
+        self.index_dir = Path(index_dir) if index_dir is not None else FAISS_INDEX_DIR
         self._embeddings: HuggingFaceEmbeddings | None = None
         self._store: FAISS | None = None
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _get_embeddings(self) -> HuggingFaceEmbeddings:
+    def _embeddings_model(self) -> HuggingFaceEmbeddings:
         if self._embeddings is None:
-            self._embeddings = HuggingFaceEmbeddings(model_name=MODEL_NAME)
+            self._embeddings = _make_embeddings()
         return self._embeddings
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def build(self, corpus: list[str], df_meta: pd.DataFrame) -> None:
-        """Build FAISS index from corpus and save to disk.
-
-        Args:
-            corpus: One document string per product (title + features + description).
-            df_meta: Metadata DataFrame aligned with corpus (same order).
-                     Must contain columns: parent_asin, title, average_rating,
-                     rating_number.
-        """
+    def build(self, df: pd.DataFrame | None = None) -> FAISS:
+        """Builds FAISS from merged rows; page_content is text_faiss, metadata aligned."""
+        frame = df if df is not None else load_processed_dataframe()
+        documents = dataframe_to_documents(frame, "text_faiss")
+        LOGGER.info("Embedding %s documents into FAISS", len(documents))
+        embeddings = self._embeddings_model()
+        store = FAISS.from_documents(documents, embedding=embeddings)
         self.index_dir.mkdir(parents=True, exist_ok=True)
-
-        keep_cols = ["parent_asin", "title", "average_rating", "rating_number"]
-        metadatas = df_meta[keep_cols].fillna("").to_dict(orient="records")
-
-        embeddings = self._get_embeddings()
-        store = FAISS.from_texts(texts=corpus, embedding=embeddings, metadatas=metadatas)
         store.save_local(str(self.index_dir))
         self._store = store
-        print(f"FAISS index saved to {self.index_dir}")
+        LOGGER.info("FAISS index saved to %s", self.index_dir)
+        return store
 
     def load(self) -> None:
-        """Load a previously saved FAISS index from disk."""
-        embeddings = self._get_embeddings()
+        """Loads a FAISS index written by build()."""
+        embeddings = self._embeddings_model()
         self._store = FAISS.load_local(
             str(self.index_dir),
             embeddings,
@@ -63,68 +71,62 @@ class SemanticRetriever:
         )
 
     def search(self, query: str, k: int = 5) -> list[dict]:
-        """Return top-k results for query.
+        """Returns top-k matches with merged-schema metadata plus score and rank.
+
+        Metadata includes doc_id, parent_asin, product/review fields from preprocess,
+        as stored on each Document (see documents.dataframe_to_documents).
+
+        Args:
+            query: Query text to embed and search.
+            k: Number of neighbors.
 
         Returns:
-            List of dicts with keys: parent_asin, title, average_rating,
-            rating_number, score, rank.
+            List of dicts: document metadata keys, plus 'score' and 'rank' (1-based).
         """
         if self._store is None:
             raise RuntimeError("Index not loaded. Call build() or load() first.")
-
         pairs = self._store.similarity_search_with_score(query, k=k)
-        results = []
+        results: list[dict] = []
         for rank, (doc, score) in enumerate(pairs, start=1):
-            meta = doc.metadata.copy()
-            meta["score"] = float(score)
-            meta["rank"] = rank
-            results.append(meta)
+            row = dict(doc.metadata)
+            row["content"] = doc.page_content
+            row["score"] = float(score)
+            row["rank"] = rank
+            results.append(row)
         return results
 
 
+def build_and_save(parquet_path: Path | None = None) -> FAISS:
+    """Loads parquet, builds FAISS on text_faiss, saves under data/context_store/faiss_index/."""
+    df = load_processed_dataframe(parquet_path)
+    retriever = SemanticRetriever()
+    return retriever.build(df)
+
+
 def main() -> None:
-    """Build the FAISS semantic index from processed metadata parquet.
+    """Build the FAISS index from merged_reviews.parquet.
 
-    Requires data/processed/metadata_clean.parquet to exist.
-    Run utils.py first if it doesn't:
-        python src/utils.py
+    Requires data/processed/merged_reviews.parquet (run src/preprocess.py first).
 
-    Run from project root:
+    From project root:
         python src/semantic.py
     """
-    import pandas as pd
-    from pathlib import Path
-    import sys
-
-    project_root = Path(__file__).resolve().parent.parent
-    sys.path.insert(0, str(project_root))
-
-    from src.utils import build_corpus
-
-    meta_parquet = project_root / "data" / "processed" / "metadata_clean.parquet"
-    index_dir = project_root / "data" / "processed" / "faiss_index"
-
-    if not meta_parquet.exists():
-        print(f"ERROR: {meta_parquet} not found.")
-        print("Run `python src/utils.py` first to generate processed data.")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if not PROCESSED_PARQUET.is_file():
+        print(f"ERROR: {PROCESSED_PARQUET} not found.", file=sys.stderr)
+        print(
+            "Run `python src/preprocess.py` first to generate merged_reviews.parquet.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    print(f"Loading metadata from {meta_parquet} ...")
-    df_meta = pd.read_parquet(meta_parquet)
-    print(f"  Loaded {len(df_meta):,} products")
-
-    print("Building corpus documents ...")
-    corpus = build_corpus(df_meta)
-    print(f"  Built {len(corpus):,} documents")
-
-    print(f"Building FAISS index (model: {MODEL_NAME}) ...")
-    print("  Embedding 137K documents — device selected automatically by sentence-transformers.")
-    retriever = SemanticRetriever(index_dir=index_dir)
-    retriever.build(corpus=corpus, df_meta=df_meta)
-
-    print("\nDone. Index saved to:")
-    print(f"  {index_dir / 'index.faiss'}")
-    print(f"  {index_dir / 'index.pkl'}")
+    print(f"Loading {PROCESSED_PARQUET} ...")
+    df = load_processed_dataframe()
+    print(f"  Loaded {len(df):,} rows")
+    print(f"Building FAISS index (embeddings: {EMBEDDING_MODEL_NAME}) ...")
+    build_and_save()
+    print("\nDone. Index saved under:")
+    print(f"  {FAISS_INDEX_DIR}")
 
 
 if __name__ == "__main__":
