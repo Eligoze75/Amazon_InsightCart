@@ -140,7 +140,7 @@ Yes, query 4 (`best god of war`) is the clearest example. BM25 reduces "God of W
 
 **Are there cases where semantic search fails?**
 
-Yes — query 8 (`best Nintendo console under 300`). The price constraint "under 300" cannot be encoded into a single vector, so semantic search ignores it. Nintendo hardware is also underrepresented in the dataset (Nintendo limits third-party Amazon listings), so neither retriever can surface the expected products regardless of method.
+Yes, query 8 (`best Nintendo console under 300`). The price constraint "under 300" cannot be encoded into a single vector, so semantic search ignores it. Nintendo hardware is also underrepresented in the dataset (Nintendo limits third-party Amazon listings), so neither retriever can surface the expected products regardless of method.
 
 **Are the top results actually useful for the user's intent?**
 
