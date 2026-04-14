@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-3-5-haiku-latest"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_NUM_VARIANTS = 3
 MAX_TOKENS = 1024
 
