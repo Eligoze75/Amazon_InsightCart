@@ -11,6 +11,7 @@ dependencies:
   - matplotlib
   - seaborn
   - spacy
+  - sentence-transformers
   - pytorch>=2.4,<3
   - pip
   - pip:

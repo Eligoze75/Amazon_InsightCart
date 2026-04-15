@@ -17,7 +17,7 @@ A retrieval-style search assistant over Amazon Video Games product data. Users s
 
 Download the **Video Games** category files from [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/) and place them here:
 
-```
+```mermaid
 data/raw/
 ├── Video_Games.jsonl          # 4.6M customer reviews
 └── meta_Video_Games.jsonl     # 137K product listings
@@ -114,7 +114,7 @@ Each FAISS and BM25 document stores `parent_asin`, `product_title`, `average_rat
 
 ## Project Structure
 
-```
+```mermaid
 ├── data/
 │   ├── raw/                        # downloaded JSONL files (not tracked)
 │   └── processed/
@@ -145,7 +145,58 @@ Each FAISS and BM25 document stores `parent_asin`, `product_title`, `average_rat
 └── README.md
 ```
 
----
+## RAG Retrieval Strategies Reference
+
+### Only Lexical Search (e.g., BM25)
+
+Best for exact keyword matching and precise term lookup.  
+Performs well when queries contain identifiers, names, or domain specific vocabulary.  
+Fast, simple, and does not require training.  
+
+Intuition: Find documents that explicitly contain the query terms.
+
+### Only Semantic Search (Embeddings)
+
+Best for capturing meaning and contextual similarity.  
+Handles synonyms, paraphrases, and natural language effectively.  
+More flexible than keyword-based approaches.  
+
+Intuition: Find documents that express similar ideas, even if wording differs.
+
+### Hybrid Search (Lexical + Semantic)
+
+Combines the strengths of lexical and semantic retrieval.  
+Lexical ensures exact matches are not missed.  
+Semantic captures conceptual similarity.  
+Improves overall recall significantly.  
+
+Intuition: Retrieve anything relevant, whether through exact terms or meaning.
+
+### Query Rewriting (Pre-retrieval)
+
+Improves the quality of the input query.  
+Adds missing context, expands terms, or resolves ambiguity.  
+Leads to better retrieval results across all methods.  
+
+Intuition: Ask a clearer and more complete question before searching.
+
+### Re-ranking (Cross-encoder)
+
+Refines the ordering of retrieved candidates.  
+Evaluates query and document jointly for deeper relevance.  
+Reduces subtle mismatches and improves final context selection.  
+
+Intuition: From a good set of candidates, select the most relevant ones.
+
+### Big Picture
+
+Lexical search provides precision on exact terms.  
+Semantic search captures meaning.  
+Hybrid search improves recall.  
+Query rewriting improves the input.  
+Re-ranking improves the final output.  
+
+Overall approach: retrieve broadly, then refine to select the best context.
 
 ## Contributors
 

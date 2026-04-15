@@ -1,8 +1,8 @@
 """Dual retrieval (BM25 + FAISS) with RRF fusion keyed by ``doc_id``.
 
 Pipeline: optional query expansion → per-query BM25 + FAISS retrieval → RRF between
-channels per query → RRF across expanded queries. Does not include cross-encoder
-reranking (later milestone).
+channels per query → RRF across expanded queries. Optional cross-encoder re-ranking
+via :mod:`src.rerank`.
 
 Run a smoke test from project root (requires built indices)::
 
@@ -230,10 +230,18 @@ def retrieve_with_expansion(
     expand: bool = True,
     num_variants: int = DEFAULT_NUM_VARIANTS,
     top_k: int = 10,
+    rerank: bool = False,
+    rerank_pool: int = 15,
+    cross_encoder: Any | None = None,
     semantic: Any | None = None,
     bm25: Any | None = None,
 ) -> HybridRetrievalResult:
-    """Expand the query (optional), then run :func:`search`."""
+    """Expand the query (optional), run :func:`search`, then optional CE re-rank.
+
+    When ``rerank`` is True, retrieval returns ``rerank_pool`` candidates (same
+    modes: semantic, bm25, hybrid), then cross-encoder scores trim to ``top_k``.
+    Re-ranking uses the original user ``query`` string, not paraphrases.
+    """
     q = query.strip()
     if not q:
         return HybridRetrievalResult(
@@ -253,8 +261,15 @@ def retrieve_with_expansion(
             LOGGER.warning("Query expansion failed: %s", exc)
             warnings.append(f"Query expansion failed ({exc}); using original query only.")
 
-    hits, w2 = search(expanded_queries, mode, top_k, semantic=semantic, bm25=bm25)
+    retrieve_k = rerank_pool if rerank else top_k
+    hits, w2 = search(expanded_queries, mode, retrieve_k, semantic=semantic, bm25=bm25)
     warnings.extend(w2)
+
+    if rerank and hits:
+        from src.rerank import rerank as ce_rerank
+
+        hits = ce_rerank(q, hits, top_k, model=cross_encoder)
+
     return HybridRetrievalResult(
         original_query=q,
         expanded_queries=expanded_queries,
@@ -302,6 +317,18 @@ def main() -> None:
         "-k", "--top-k", type=int, default=5, help="Number of hits to return"
     )
     parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Cross-encoder re-rank after retrieval (see --rerank-pool)",
+    )
+    parser.add_argument(
+        "--rerank-pool",
+        type=int,
+        default=15,
+        metavar="N",
+        help="Candidates to retrieve before re-ranking (with --rerank)",
+    )
+    parser.add_argument(
         "--no-expand",
         action="store_true",
         help="Skip Claude query expansion",
@@ -313,6 +340,8 @@ def main() -> None:
         mode=args.mode,
         expand=not args.no_expand,
         top_k=args.top_k,
+        rerank=args.rerank,
+        rerank_pool=args.rerank_pool,
     )
     if result.warnings:
         for w in result.warnings:
