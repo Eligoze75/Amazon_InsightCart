@@ -1,6 +1,6 @@
 # Smart Amazon Video Games Product Search
 
-A retrieval-style search assistant over Amazon Video Games product data. Users submit natural language queries; the system retrieves relevant products using lexical search (BM25), dense semantic search (FAISS), or a hybrid of both — optionally with Claude-powered query expansion.
+A retrieval-style search assistant over Amazon Video Games product data. Users submit natural language queries; the system retrieves relevant products using lexical search (BM25), dense semantic search (FAISS), or a hybrid of both — optionally with Claude-powered query expansion. After retrieval, you can **re-rank** the top candidates with a cross-encoder so the final list better matches what the user actually asked for.
 
 <details>
 <summary>Pipeline Architecture</summary>
@@ -39,8 +39,8 @@ Run scripts from the project root in order:
 python src/preprocess.py
 
 # Step 2 — Build indices (order does not matter, can run in parallel)
-python src/bm25.py       # BM25 index  → context_store/bm25_retriever.pkl
-python src/semantic.py   # FAISS index → context_store/faiss_index/
+python src/bm25.py       # BM25 index  → data/context_store/bm25_retriever.pkl
+python src/semantic.py   # FAISS index → data/context_store/faiss_index/
 ```
 
 ### 4. Run the app
@@ -49,7 +49,21 @@ python src/semantic.py   # FAISS index → context_store/faiss_index/
 streamlit run app/app.py
 ```
 
-Add your `ANTHROPIC_API_KEY` to `.env` to enable query expansion (optional).
+Add your `ANTHROPIC_API_KEY` to `.env` to enable query expansion (optional). The app can **re-rank** results with a cross-encoder (on by default); turn that off in the UI if you only want raw retrieval scores.
+
+### 5. Quick CLI checks (same environment, indices already built)
+
+You do not need Streamlit to exercise search. From the project root, after steps 3–4, you can run short end-to-end tests: retrieval pulls a **pool** of candidates (wider net), then the re-ranker keeps the top **`-k`** for printing.
+
+```bash
+# Dedicated re-rank entrypoint (retrieval + cross-encoder in one command)
+python src/rerank.py "wireless PS5 controller" --mode hybrid --pool 10 -k 3 --no-expand
+
+# Same pipeline via hybrid.py; --rerank turns on cross-encoder scoring after retrieval
+python src/hybrid.py "your query" --mode hybrid --rerank --rerank-pool 10 -k 3 --no-expand
+```
+
+Use `--mode semantic` or `--mode bm25` to exercise a single channel. Drop `--no-expand` when you have an API key and want paraphrases. Omit `--rerank` on `hybrid.py` to see retrieval-only rankings.
 
 ---
 
@@ -58,9 +72,10 @@ Add your `ANTHROPIC_API_KEY` to `.env` to enable query expansion (optional).
 | Script | Purpose | Input | Output |
 |---|---|---|---|
 | `src/preprocess.py` | ETL — merge raw JSONL into product parquet | `data/raw/*.jsonl` | `data/processed/merged_reviews.parquet` |
-| `src/bm25.py` | Build BM25 index | `merged_reviews.parquet` | `context_store/bm25_retriever.pkl` |
-| `src/semantic.py` | Build FAISS index | `merged_reviews.parquet` | `context_store/faiss_index/` |
-| `src/hybrid.py` | Hybrid retrieval with RRF fusion | FAISS + BM25 indices | `list[dict]` hits |
+| `src/bm25.py` | Build BM25 index | `merged_reviews.parquet` | `data/context_store/bm25_retriever.pkl` |
+| `src/semantic.py` | Build FAISS index | `merged_reviews.parquet` | `data/context_store/faiss_index/` |
+| `src/hybrid.py` | Retrieval (BM25 / FAISS / hybrid RRF) and optional `--rerank` | FAISS + BM25 indices | `list[dict]` hits |
+| `src/rerank.py` | Cross-encoder re-ranking (`ms-marco-MiniLM-L-6-v2`) + CLI | retriever hits | re-ordered hits |
 | `src/query_expansion.py` | Rewrite queries with Claude Haiku | user query | paraphrases |
 | `src/documents.py` | Convert DataFrame rows to LangChain Documents | DataFrame | `list[Document]` |
 | `app/app.py` | Streamlit search UI | indices | search results |
@@ -110,6 +125,12 @@ Query expansion is optional — the app can run without an API key by unchecking
 
 Each FAISS and BM25 document stores `parent_asin`, `product_title`, `average_rating`, `rating_number`, and `review_texts` in its metadata. Search results therefore carry all display fields without a secondary parquet lookup at query time.
 
+### 7. Cross-encoder re-ranking
+
+First-stage retrievers are fast but only approximate query–document match (BM25 counts words; the bi-encoder scores passage vectors against the query vector **separately**). A **cross-encoder** reads the query and each candidate passage **together** and outputs a single relevance score, which is closer to “does this passage answer this question?” — at the cost of more compute.
+
+**In this project:** we retrieve a larger pool (default 15), then re-rank with `cross-encoder/ms-marco-MiniLM-L-6-v2` using the product’s `text_faiss` passage as `content`. The user’s **original** query is used for scoring (not each expansion), so paraphrases still help recall while the final order stays grounded in what they typed. The Streamlit app caches the cross-encoder so it is not reloaded on every click.
+
 ---
 
 ## Project Structure
@@ -117,23 +138,23 @@ Each FAISS and BM25 document stores `parent_asin`, `product_title`, `average_rat
 ```mermaid
 ├── data/
 │   ├── raw/                        # downloaded JSONL files (not tracked)
-│   └── processed/
-│       └── merged_reviews.parquet  # 137K product rows (built by preprocess.py)
-│
-├── │   ├── context_store/
-│   │   ├── bm25_retriever.pkl      # pickled BM25 index
-│   │   └── faiss_index/            # FAISS index files
+│   ├── processed/
+│   │   └── merged_reviews.parquet  # 137K product rows (built by preprocess.py)
+│   └── context_store/
+│       ├── bm25_retriever.pkl      # pickled BM25 index
+│       └── faiss_index/            # FAISS index files
 │
 ├── src/
 │   ├── preprocess.py               # ETL
 │   ├── bm25.py                     # BM25 index build
 │   ├── semantic.py                 # FAISS index build + SemanticRetriever
-│   ├── hybrid.py                   # RRF fusion + search entry point
+│   ├── hybrid.py                   # RRF fusion + search + optional CLI re-rank
+│   ├── rerank.py                   # Cross-encoder re-rank + CLI smoke tests
 │   ├── query_expansion.py          # Claude Haiku query rewriting
 │   └── documents.py                # DataFrame → LangChain Document helper
 │
 ├── app/
-│   └── app.py                      # Streamlit UI
+│   └── app.py                      # Streamlit UI (retrieval + optional re-rank)
 │
 ├── notebooks/
 │   └── milestone1_exploration.ipynb
@@ -186,7 +207,8 @@ Refines the ordering of retrieved candidates.
 Evaluates query and document jointly for deeper relevance.  
 Reduces subtle mismatches and improves final context selection.  
 
-Intuition: From a good set of candidates, select the most relevant ones.
+Intuition: From a good set of candidates, select the most relevant ones.  
+**In this repo:** implemented in `src/rerank.py`, wired from `src/hybrid.py` (`retrieve_with_expansion`) and the Streamlit app.
 
 ### Big Picture
 
