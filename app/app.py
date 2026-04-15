@@ -15,8 +15,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.hybrid import search_from_ui_mode
-from src.query_expansion import DEFAULT_NUM_VARIANTS, expand_query
+from src.hybrid import SearchMode, retrieve_with_expansion
 from src.semantic import SemanticRetriever
 
 FEEDBACK_CSV     = ROOT / "data" / "feedback.csv"
@@ -50,23 +49,57 @@ def _load_bm25():
         return None
 
 
+@st.cache_resource(show_spinner="Loading cross-encoder…")
+def _load_cross_encoder():
+    from src.rerank import load_cross_encoder
+
+    return load_cross_encoder()
+
+
 # ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
 
 
-def _run_search(queries: list[str], mode: str, k: int = 3) -> list[dict]:
-    """Dispatch to hybrid.search_from_ui_mode with cached retrievers."""
+def _ui_mode_to_search_mode(ui_label: str) -> SearchMode:
+    mapping: dict[str, SearchMode] = {
+        "Semantic": "semantic",
+        "BM25": "bm25",
+        "Hybrid": "hybrid",
+    }
+    return mapping.get(ui_label, "hybrid")
+
+
+def _run_search(
+    raw_query: str,
+    ui_mode: str,
+    *,
+    use_expansion: bool,
+    use_rerank: bool,
+    final_k: int = 3,
+    rerank_pool: int = 15,
+):
+    """Runs :func:`retrieve_with_expansion` with cached indices and optional CE."""
     semantic = _load_semantic()
-    if mode in ("Semantic", "Hybrid") and semantic is None:
-        return []
+    if ui_mode in ("Semantic", "Hybrid") and semantic is None:
+        return [], [], []
     bm25 = _load_bm25()
-    results, warnings = search_from_ui_mode(
-        queries, mode, k, semantic=semantic, bm25=bm25
+    ce = _load_cross_encoder() if use_rerank else None
+    mode = _ui_mode_to_search_mode(ui_mode)
+    result = retrieve_with_expansion(
+        raw_query,
+        mode=mode,
+        expand=use_expansion,
+        top_k=final_k,
+        rerank=use_rerank,
+        rerank_pool=rerank_pool,
+        cross_encoder=ce,
+        semantic=semantic,
+        bm25=bm25,
     )
-    for w in warnings:
+    for w in result.warnings:
         st.warning(w)
-    return results
+    return result.hits, result.expanded_queries, result.warnings
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +152,12 @@ def main() -> None:
         help="Rewrites your query into paraphrases for broader recall. Requires ANTHROPIC_API_KEY in .env.",
     )
 
+    use_rerank = st.checkbox(
+        "Re-rank with Cross-Encoder",
+        value=True,
+        help="Retrieves a larger candidate set, then scores query–passage pairs with cross-encoder/ms-marco-MiniLM-L-6-v2.",
+    )
+
     query = st.text_input("Enter your search query", placeholder="e.g. wireless controller for PS5")
     search_clicked = st.button("Search", type="primary")
 
@@ -127,22 +166,22 @@ def main() -> None:
         return
 
     if search_clicked and query.strip():
-        raw_q   = query.strip()
-        queries = [raw_q]
-
-        if use_expansion:
-            try:
-                expanded = expand_query(raw_q, num_variants=DEFAULT_NUM_VARIANTS)
-                queries  = expanded.all_queries()
-                st.session_state["expanded_queries"] = queries
-            except Exception as exc:
-                st.session_state.pop("expanded_queries", None)
-                st.warning(f"Query expansion failed ({exc}). Using original query only.")
-        else:
-            st.session_state.pop("expanded_queries", None)
+        raw_q = query.strip()
 
         with st.spinner("Searching…"):
-            results = _run_search(queries, mode, k=3)
+            results, expanded_queries, _warnings = _run_search(
+                raw_q,
+                mode,
+                use_expansion=use_expansion,
+                use_rerank=use_rerank,
+                final_k=3,
+                rerank_pool=15,
+            )
+
+        if expanded_queries:
+            st.session_state["expanded_queries"] = expanded_queries
+        else:
+            st.session_state.pop("expanded_queries", None)
 
         if not results:
             st.info("No results found.")
