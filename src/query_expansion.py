@@ -119,6 +119,60 @@ def expand_query(
     return QueryExpansionResult(original=q, variants=variants)
 
 
+RAG_SYSTEM_PROMPT = (
+    "You are a helpful Amazon Video Games product assistant. "
+    "Answer the user's question using only the product information provided. "
+    "Be concise and specific."
+)
+
+
+def generate_answer(
+    query: str,
+    results: list[dict],
+    *,
+    model: str = DEFAULT_MODEL,
+    client: Anthropic | None = None,
+) -> str:
+    """Synthesize a natural language answer from retrieved product results.
+
+    Args:
+        query: The original user query.
+        results: Top-k result dicts from hybrid search (must have ``product_title``
+                 and either ``content`` or ``review_texts``).
+        model: Claude model to use.
+        client: Optional pre-built Anthropic client (avoids repeated key lookup).
+
+    Returns:
+        A 2-3 sentence answer grounded in the retrieved products.
+    """
+    if client is None:
+        client = Anthropic(api_key=_get_api_key())
+
+    context_parts: list[str] = []
+    for i, r in enumerate(results, 1):
+        title = r.get("product_title") or "Unknown product"
+        rating = r.get("average_rating")
+        rating_str = f" (rated {rating:.1f}/5)" if rating is not None else ""
+        text = (r.get("content") or r.get("review_texts") or "").strip()
+        snippet = text[:500] + ("…" if len(text) > 500 else "")
+        context_parts.append(f"{i}. {title}{rating_str}\n{snippet}")
+
+    context = "\n\n".join(context_parts)
+    user_prompt = (
+        f"User query: {query}\n\n"
+        f"Top retrieved products:\n{context}\n\n"
+        "Based only on the products above, answer the user's query in 2-3 sentences."
+    )
+
+    msg = client.messages.create(
+        model=model,
+        max_tokens=512,
+        system=RAG_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    return msg.content[0].text.strip()
+
+
 def main() -> None:
     """Smoke test: expand a sample query (requires ANTHROPIC_API_KEY)."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
