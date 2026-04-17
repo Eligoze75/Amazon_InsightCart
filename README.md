@@ -1,6 +1,6 @@
 # Smart Amazon Video Games Product Search
 
-A retrieval-style search assistant over Amazon Video Games product data. Users submit natural language queries; the system retrieves relevant products using lexical search (BM25), dense semantic search (FAISS), or a hybrid of both — optionally with Claude-powered query expansion. After retrieval, you can **re-rank** the top candidates with a cross-encoder so the final list better matches what the user actually asked for.
+A retrieval-style search assistant over Amazon Video Games product data. Users submit natural language queries; the system retrieves relevant products using lexical search (BM25), dense semantic search (FAISS), or a hybrid of both — optionally with Claude-powered query expansion. After retrieval, you can **re-rank** the top candidates with a cross-encoder so the final list better matches what the user actually asked for. In the Streamlit app, you can optionally ask Claude to read the top hits and write a short grounded answer (separate from expansion; same API key).
 
 <details>
 <summary>Pipeline Architecture</summary>
@@ -8,6 +8,10 @@ A retrieval-style search assistant over Amazon Video Games product data. Users s
 ![Pipeline Architecture](img/architecture.png)
 
 </details>
+
+## Disclaimer
+
+We know what the milestones asked for. We still went beyond a naive retrieval baseline and implemented a fuller RAG style pipeline. The optional additions are query expansion with Claude Haiku before search and cross-encoder re-ranking on the candidate pool. In the Streamlit app, reviewers can turn each of these off. We included them to explore and practice improvements that show up in real world RAG systems.
 
 ---
 
@@ -49,11 +53,11 @@ python src/semantic.py   # FAISS index → data/context_store/faiss_index/
 streamlit run app/app.py
 ```
 
-Add your `ANTHROPIC_API_KEY` to `.env` to enable query expansion (optional). The app can **re-rank** results with a cross-encoder (on by default); turn that off in the UI if you only want raw retrieval scores.
+Add your `ANTHROPIC_API_KEY` to `.env` to enable query expansion and the optional **Generate answer with Claude** step (both optional; uncheck in the UI if you want retrieval only). The app can **re-rank** results with a cross-encoder (on by default); turn that off in the UI if you only want raw retrieval scores.
 
 ### 5. Quick CLI checks (same environment, indices already built)
 
-You do not need Streamlit to exercise search. From the project root, after steps 3–4, you can run short end-to-end tests: retrieval pulls a **pool** of candidates (wider net), then the re-ranker keeps the top **`-k`** for printing.
+You do not need Streamlit to exercise search. From the project root, after steps 3–4, you can run short end to end tests: retrieval pulls a **pool** of candidates (wider net), then the re-ranker keeps the top **`-k`** for printing. These commands cover retrieval and re-ranking only; the optional Claude answer line (`generate_answer` in `src/query_expansion.py`) runs in the Streamlit app, not the CLI.
 
 ```bash
 # Dedicated re-rank entrypoint (retrieval + cross-encoder in one command)
@@ -63,7 +67,7 @@ python src/rerank.py "wireless PS5 controller" --mode hybrid --pool 10 -k 3 --no
 python src/hybrid.py "your query" --mode hybrid --rerank --rerank-pool 10 -k 3 --no-expand
 ```
 
-Use `--mode semantic` or `--mode bm25` to exercise a single channel. Drop `--no-expand` when you have an API key and want paraphrases. Omit `--rerank` on `hybrid.py` to see retrieval-only rankings.
+Use `--mode semantic` or `--mode bm25` to exercise a single channel. Drop `--no-expand` when you have an API key and want paraphrases. Omit `--rerank` on `hybrid.py` to see retrieval only rankings. For the optional grounded LLM answer, use the app with an API key and enable **Generate answer with Claude**.
 
 ---
 
@@ -76,9 +80,9 @@ Use `--mode semantic` or `--mode bm25` to exercise a single channel. Drop `--no-
 | `src/semantic.py` | Build FAISS index | `merged_reviews.parquet` | `data/context_store/faiss_index/` |
 | `src/hybrid.py` | Retrieval (BM25 / FAISS / hybrid RRF) and optional `--rerank` | FAISS + BM25 indices | `list[dict]` hits |
 | `src/rerank.py` | Cross-encoder re-ranking (`ms-marco-MiniLM-L-6-v2`) + CLI | retriever hits | re-ordered hits |
-| `src/query_expansion.py` | Rewrite queries with Claude Haiku | user query | paraphrases |
+| `src/query_expansion.py` | Claude Haiku: query paraphrases for retrieval; optional grounded answer for the app (`generate_answer`) | user query; top hits + query | paraphrases; answer string |
 | `src/documents.py` | Convert DataFrame rows to LangChain Documents | DataFrame | `list[Document]` |
-| `app/app.py` | Streamlit search UI | indices | search results |
+| `app/app.py` | Streamlit search UI (retrieval, optional re-rank, optional Claude answer) | indices | search results + optional answer |
 
 ---
 
@@ -131,6 +135,10 @@ First-stage retrievers are fast but only approximate query–document match (BM2
 
 **In this project:** we retrieve a larger pool (default 15), then re-rank with `cross-encoder/ms-marco-MiniLM-L-6-v2` using the product’s `text_faiss` passage as `content`. The user’s **original** query is used for scoring (not each expansion), so paraphrases still help recall while the final order stays grounded in what they typed. The Streamlit app caches the cross-encoder so it is not reloaded on every click.
 
+### 8. Optional grounded answer (Streamlit only)
+
+After retrieval and optional re-ranking, the app can call Claude Haiku a second time (`generate_answer`) with the user query and the top product snippets. The model returns a short answer that must stay grounded in those snippets. This step is independent of query expansion (different system prompt and user message). It requires `ANTHROPIC_API_KEY` and is toggled in the UI; there is no CLI entrypoint for it.
+
 ---
 
 ## Project Structure
@@ -150,11 +158,11 @@ First-stage retrievers are fast but only approximate query–document match (BM2
 │   ├── semantic.py                 # FAISS index build + SemanticRetriever
 │   ├── hybrid.py                   # RRF fusion + search + optional CLI re-rank
 │   ├── rerank.py                   # Cross-encoder re-rank + CLI smoke tests
-│   ├── query_expansion.py          # Claude Haiku query rewriting
+│   ├── query_expansion.py          # Claude: query paraphrases + optional app answer
 │   └── documents.py                # DataFrame → LangChain Document helper
 │
 ├── app/
-│   └── app.py                      # Streamlit UI (retrieval + optional re-rank)
+│   └── app.py                      # Streamlit UI (retrieval, re-rank, optional answer)
 │
 ├── notebooks/
 │   └── milestone1_exploration.ipynb
@@ -210,6 +218,10 @@ Reduces subtle mismatches and improves final context selection.
 Intuition: From a good set of candidates, select the most relevant ones.  
 **In this repo:** implemented in `src/rerank.py`, wired from `src/hybrid.py` (`retrieve_with_expansion`) and the Streamlit app.
 
+### Optional answer synthesis (Streamlit)
+
+After you have a ranked list, Claude can summarize the user’s question using only the retrieved product text (`generate_answer` in `src/query_expansion.py`). This is optional and app only; the CLI exercises retrieval and re-ranking.
+
 ### Big Picture
 
 Lexical search provides precision on exact terms.  
@@ -217,6 +229,7 @@ Semantic search captures meaning.
 Hybrid search improves recall.  
 Query rewriting improves the input.  
 Re-ranking improves the final output.  
+Optional generation turns the best context into a short answer for the user in the app.
 
 Overall approach: retrieve broadly, then refine to select the best context.
 
