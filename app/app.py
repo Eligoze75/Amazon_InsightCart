@@ -170,7 +170,7 @@ def main() -> None:
 
     use_rag = st.checkbox(
         "Generate answer with Claude (RAG)",
-        value=False,
+        value=True,
         help="After retrieval, Claude reads the top results and synthesizes a direct answer. Requires ANTHROPIC_API_KEY in .env.",
     )
 
