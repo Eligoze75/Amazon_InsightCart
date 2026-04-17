@@ -23,15 +23,19 @@ from src.documents import dataframe_to_documents  # noqa: E402
 
 LOGGER = logging.getLogger(__name__)
 
-PROCESSED_PARQUET  = _ROOT / "data" / "processed" / "merged_reviews.parquet"
-FAISS_INDEX_DIR    = _ROOT / "data" / "context_store" / "faiss_index"
-EMBEDDING_MODEL    = "sentence-transformers/all-MiniLM-L6-v2"
+PROCESSED_PARQUET = _ROOT / "data" / "processed" / "merged_reviews.parquet"
+FAISS_INDEX_DIR = _ROOT / "data" / "context_store" / "faiss_index"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # Columns stored in each Document's metadata — returned by search() and used
 # by the app to display results without an extra parquet lookup.
 _META_COLS = [
-    "doc_id", "parent_asin", "product_title",
-    "average_rating", "rating_number", "review_texts",
+    "doc_id",
+    "parent_asin",
+    "product_title",
+    "average_rating",
+    "rating_number",
+    "review_texts",
 ]
 
 
@@ -46,20 +50,16 @@ def load_processed_dataframe(parquet_path: Path | None = None) -> pd.DataFrame:
 
 
 def _make_embeddings() -> HuggingFaceEmbeddings:
-    return HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
-        encode_kwargs={"batch_size": 128},
-        show_progress=True,
-    )
+    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL, show_progress=True)
 
 
 class SemanticRetriever:
     """Builds, persists, and queries a FAISS store over text_faiss documents."""
 
     def __init__(self, index_dir: Path | str | None = None) -> None:
-        self.index_dir   = Path(index_dir) if index_dir is not None else FAISS_INDEX_DIR
+        self.index_dir = Path(index_dir) if index_dir is not None else FAISS_INDEX_DIR
         self._embeddings = None
-        self._store      = None
+        self._store = None
 
     def _embeddings_model(self) -> HuggingFaceEmbeddings:
         if self._embeddings is None:
@@ -68,7 +68,7 @@ class SemanticRetriever:
 
     def build(self, df: pd.DataFrame | None = None) -> FAISS:
         """Embed text_faiss documents and save the FAISS index to disk."""
-        frame     = df if df is not None else load_processed_dataframe()
+        frame = df if df is not None else load_processed_dataframe()
         documents = dataframe_to_documents(frame, "text_faiss")
         LOGGER.info("Embedding %s documents into FAISS", len(documents))
         store = FAISS.from_documents(documents, embedding=self._embeddings_model())
@@ -93,10 +93,10 @@ class SemanticRetriever:
         pairs = self._store.similarity_search_with_score(query, k=k)
         results = []
         for rank, (doc, score) in enumerate(pairs, start=1):
-            row          = dict(doc.metadata)
+            row = dict(doc.metadata)
             row["content"] = doc.page_content
-            row["score"]   = float(score)
-            row["rank"]    = rank
+            row["score"] = float(score)
+            row["rank"] = rank
             results.append(row)
         return results
 

@@ -16,9 +16,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.hybrid import SearchMode, retrieve_with_expansion
+from src.query_expansion import generate_answer
 from src.semantic import SemanticRetriever
 
-FEEDBACK_CSV     = ROOT / "data" / "feedback.csv"
+FEEDBACK_CSV = ROOT / "data" / "feedback.csv"
 FEEDBACK_HEADERS = ["timestamp", "query", "mode", "parent_asin", "title", "feedback"]
 
 
@@ -40,6 +41,7 @@ def _load_semantic() -> SemanticRetriever | None:
 @st.cache_resource(show_spinner="Loading BM25 index…")
 def _load_bm25():
     from src import bm25 as bm25_mod
+
     path = bm25_mod.BM25_INDEX_PATH
     if not path.is_file():
         return None
@@ -115,24 +117,30 @@ def _stars(rating: float | None) -> str:
 
 
 def _title(row: dict) -> str:
-    return str(row.get("product_title") or row.get("product_post_title") or "Unknown product")
+    return str(
+        row.get("product_title") or row.get("product_post_title") or "Unknown product"
+    )
 
 
-def _save_feedback(query: str, mode: str, parent_asin: str, title: str, vote: str) -> None:
+def _save_feedback(
+    query: str, mode: str, parent_asin: str, title: str, vote: str
+) -> None:
     FEEDBACK_CSV.parent.mkdir(parents=True, exist_ok=True)
     write_header = not FEEDBACK_CSV.exists()
     with open(FEEDBACK_CSV, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FEEDBACK_HEADERS)
         if write_header:
             writer.writeheader()
-        writer.writerow({
-            "timestamp":   datetime.now(timezone.utc).isoformat(),
-            "query":       query,
-            "mode":        mode,
-            "parent_asin": parent_asin,
-            "title":       title,
-            "feedback":    vote,
-        })
+        writer.writerow(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "query": query,
+                "mode": mode,
+                "parent_asin": parent_asin,
+                "title": title,
+                "feedback": vote,
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +152,9 @@ def main() -> None:
     st.set_page_config(page_title="Video Games Search", layout="wide")
     st.title("Amazon Video Games Product Search")
 
-    mode = st.radio("Search Mode", ["Semantic", "BM25", "Hybrid"], horizontal=True, index=2)
+    mode = st.radio(
+        "Search Mode", ["Semantic", "BM25", "Hybrid"], horizontal=True, index=2
+    )
 
     use_expansion = st.checkbox(
         "Expand query with Claude",
@@ -158,7 +168,15 @@ def main() -> None:
         help="Retrieves a larger candidate set, then scores query–passage pairs with cross-encoder/ms-marco-MiniLM-L-6-v2.",
     )
 
-    query = st.text_input("Enter your search query", placeholder="e.g. wireless controller for PS5")
+    use_rag = st.checkbox(
+        "Generate answer with Claude (RAG)",
+        value=True,
+        help="After retrieval, Claude reads the top results and synthesizes a direct answer. Requires ANTHROPIC_API_KEY in .env.",
+    )
+
+    query = st.text_input(
+        "Enter your search query", placeholder="e.g. wireless controller for PS5"
+    )
     search_clicked = st.button("Search", type="primary")
 
     if mode in ("Semantic", "Hybrid") and _load_semantic() is None:
@@ -188,16 +206,27 @@ def main() -> None:
             st.session_state.pop("results", None)
             return
 
-        st.session_state["results"]      = results
+        st.session_state["results"] = results
         st.session_state["search_query"] = raw_q
-        st.session_state["search_mode"]  = mode
+        st.session_state["search_mode"] = mode
+
+        if use_rag and results:
+            try:
+                with st.spinner("Generating answer with Claude…"):
+                    answer = generate_answer(raw_q, results)
+                st.session_state["rag_answer"] = answer
+            except Exception as exc:
+                st.session_state.pop("rag_answer", None)
+                st.warning(f"RAG generation failed ({exc}). Showing results only.")
+        else:
+            st.session_state.pop("rag_answer", None)
 
     if "results" not in st.session_state:
         return
 
-    results       = st.session_state["results"]
+    results = st.session_state["results"]
     display_query = st.session_state["search_query"]
-    mode          = st.session_state["search_mode"]
+    mode = st.session_state["search_mode"]
 
     st.markdown("---")
 
@@ -206,14 +235,19 @@ def main() -> None:
             for i, q in enumerate(st.session_state["expanded_queries"], start=1):
                 st.markdown(f"{i}. {q}")
 
+    if st.session_state.get("rag_answer"):
+        st.subheader("Claude's Answer")
+        st.info(st.session_state["rag_answer"])
+        st.markdown("---")
+
     st.subheader(f"Top {len(results)} results — {mode} search")
 
     for result in results:
-        asin       = result.get("parent_asin", "")
-        title      = _title(result)
+        asin = result.get("parent_asin", "")
+        title = _title(result)
         avg_rating = result.get("average_rating")
         rating_num = result.get("rating_number")
-        score      = result.get("score", 0.0)
+        score = result.get("score", 0.0)
 
         # Review snippet comes from aggregated review_texts stored in parquet metadata
         review_text = str(result.get("review_texts") or "")
