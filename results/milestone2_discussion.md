@@ -56,8 +56,6 @@ I still feel like the model shouldn't mention that it only has access to what wa
 
 ## Results (5 queries)
 
-For each query, record the **top retrieved titles** (or screenshot), the **model answer**, and a short **your judgment** (grounded? useful? too vague?).
-
 ### 1. `wireless PS5 controller`
 
 **Retrieval snapshot (titles or notes):**

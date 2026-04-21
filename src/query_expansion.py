@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 LOGGER = logging.getLogger(__name__)
 
+EXPANSION_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_NUM_VARIANTS = 3
 MAX_TOKENS = 1024
@@ -77,7 +78,7 @@ def expand_query(
     query: str,
     *,
     num_variants: int = DEFAULT_NUM_VARIANTS,
-    model: str = DEFAULT_MODEL,
+    model: str = EXPANSION_MODEL,
     client: Anthropic | None = None,
 ) -> QueryExpansionResult:
     """Returns the original query and Haiku-generated paraphrases."""
