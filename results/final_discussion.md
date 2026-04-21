@@ -6,19 +6,149 @@
 
 - **Number of products used:** 137,269 unique products
 - **Sampling strategy:** No sampling, the full Amazon Video Games metadata catalogue is used. The raw dataset contains 4.6 million customer reviews across those 137K products. Preprocessing aggregates the top-10 most helpful reviews per product (by `helpful_vote`) into a single row, so the index operates at product granularity rather than review granularity.
-- **Index rebuild:** Both the BM25 index (`data/context_store/bm25_retriever.pkl`) and the FAISS index (`data/context_store/faiss_index/`) were built over the full 137K-product parquet. No changes to the indexing scripts were required — the pipeline already processed the entire dataset from Milestone 1.
+- **Index rebuild:** Both the BM25 index (`data/context_store/bm25_retriever.pkl`) and the FAISS index (`data/context_store/faiss_index/`) were built over the full 137K-product parquet. No changes to the indexing scripts were required, the pipeline already processed the entire dataset from Milestone 1.
 
 ---
 
 ### LLM Experiment
+
+Our default model till now has been Claude Haiku, Anthropic's fastest and most cost effective model so far. We've heard so many wonders about Opus that we wanted to put it to the test. Claude Opus is Anthropic’s most intelligent model, designed for complex reasoning, coding, and high level analysis.
+
+So, basically we want to know:
+
+- Will Opus live up to the hype?
+- For this task, is there a significant improvement on results when using Opus instead of Haiku?
+- How much slower will the response be? Since this is a RAG with multiple steps that take time, we want to test if adding a heavy thinking model will increase latency even more
+
+We'll use the same queries we documented in `results/milestone2_discussion.md`.
 
 **Models compared:**
 
 | Model | Family | Size/tier | Role |
 |---|---|---|---|
 | `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | Small / fast | Current default in pipeline |
+| `claude-opus-4-7` | Claude Opus 4.7 | High complexity reasoning / slow | Challenger |
 |  |  |  |  |
 
+#### Tests
+
+1. **`wireless PS5 controller`**
+
+**Retrieval snapshot (titles or notes):**
+
+- Wireless Keyboard for PS5 Controller, arVin Rechargeable Bluetooth Keypad Gamepad Online Gaming Live Chat Message Chatpad Keyboard with Built-in Speaker & 3.5MM Audio Jack for Playstation 5 Dualsense
+- Custom UN-MODDED Wireless PRO Controller compatible with PS5 DualSense Exclusive Unique Design (Mask)
+- SADES PS5 Controller Charging Station Wireless Charging Receiver Adapter Compatible With PS5 Controller Gamepad,Fast Charger PS5 Wireless Handle Double Seat Charge
+
+**Haiku's Answer:**
+
+*I found a couple of options for you! If you're looking for an actual PS5 controller, there's a Custom UN-MODDED Wireless PRO Controller compatible with PS5 DualSense that has an excellent rating of 4.6/5 stars. Alternatively, if you need charging solutions for your PS5 controller, the SADES PS5 Controller Charging Station offers wireless charging capability with a double seat design for convenient charging.*
+
+**Opus's Answer:**
+
+*Here are some great wireless options for your PS5 controller! The Custom UN-MODDED Wireless PRO Controller (4.6/5) is a standout DualSense-compatible controller with an exclusive Mask design. You might also like the arVin Wireless Bluetooth Keypad for live chat and messaging, or the SADES Wireless Charging Station to keep your controllers powered up.*
+
+**Comments**  
+
+I kind of see the difference. Opus looks like taking the role more seriously, like being more convincing and appealing. At the same time, it made use of all the retrieved options, whereas Haiku only suggested two of them. In this case I would prefer Opus's answer.
+
+---
+
+**2. `best god of war`**
+
+**Retrieval snapshot (titles or notes):**
+
+- God of War: Collection Full Game - PS Vita [Digital Code]
+- God of War 3 Favoritos - Spanish/English Edition - PlayStation 3
+- God of War 2 - PlayStation 2
+
+**Haiku's Answer:**
+
+*Based on the available options, God of War 2 for PlayStation 2 stands out as an excellent choice with a 4.5/5 rating—the highest among these titles. It continues Kratos's epic saga as he sits atop the Olympus throne and battles untold horrors across the far reaches of the earth. If you're looking for a complete collection experience, the God of War: Collection for PS Vita offers both the original God of War and God of War II in one package, bringing the classic adventures of ancient Greece to a portable system.*
+
+**Opus's Answer:**
+
+*Based on ratings, God of War 2 for PlayStation 2 is the top pick, scoring an impressive 4.5/5. In this epic adventure, Kratos takes his throne as the new God of War and embarks on a brutal journey to the far reaches of the earth to end his torment. It's a must-play for fans of action-packed mythological storytelling!*
+
+**Comments**  
+
+I liked that Haiku suggested more options to complement the purchase. In a way, is like giving the user a wider view of what they could prefer or find. On the other hand, Opus focused on exactly what was searched. In this case I guess that each model wins on different aspects: Haiku gave a more complete answer, offering different products. Opus focused on the best option only.
+
+---
+
+**3. `party game for Switch`**
+
+**Retrieval snapshot (titles or notes):**
+
+- Vegas Party (Nintendo Switch)
+- Sports Party - Nintendo Switch Standard Edition
+- 30 In 1 Game Collection Vol 1 (Nintendo Switch)
+
+**Haiku's Answer:**
+
+*Great choice! For party games on Switch, I'd recommend Sports Party (rated 4.3/5), which lets you challenge friends and family to fun sports like Frisbee, basketball, golf, and beach tennis. If you want more variety, the 30 In 1 Game Collection Vol 1 (also 4.3/5) offers 30 different pick-up-and-play games perfect for groups, including classics and skill-based challenges. Both are excellent for multiplayer fun!*
+
+**Opus's Answer:**
+
+*Here are some great party games for your Nintendo Switch! Sports Party (4.3/5) is a top pick, offering six sports like Frisbee, basketball, and beach tennis that you can enjoy with family and friends. For variety, the 30 In 1 Game Collection Vol 1 (4.3/5) packs tons of quick pick-up-and-play mini-games, while Vegas Party brings a fun, competitive Las Vegas-themed race with 10 gambling minigames.*
+
+**Comments**  
+
+In this case the answer is actually very very similar. The difference is mainly at the end. Since the output is basically indifferent, then I would prefer Haiku's.
+
+---
+
+**4. `RPG under $30`**
+
+**Retrieval snapshot (titles or notes):**
+
+- Dark Cloud (Renewed) ($30)
+- Codex: Death Guard (Hb) (English) ($40)
+- Advanced Dungeons & Dragons: Masterpiece Collection
+
+**Haiku's Answer:**
+
+*Based on the products available, I'd recommend Dark Cloud (Renewed) for an RPG under $30. This PlayStation 2 game combines RPG action with real-time strategy and features an innovative Georama system that lets you build customized worlds. It has excellent ratings (4.1/5) and offers imaginative, vibrant gameplay at an affordable price point.*
+
+**Opus's Answer:**
+
+*For an RPG under $30, I'd recommend Dark Cloud (Renewed) for PlayStation 2. It's a highly-rated (4.1/5) cross-genre RPG featuring real-time strategy, an engaging storyline, and the innovative Georama world-building feature that lets you customize and interact with your environments.*
+
+**Comments**  
+
+I like how Opus phrases the pitch. Instead of talking about the "available products" it simply talks about the products and the reviews. The answer was also more concise again.
+
+### 
+
+---
+
+**5. `PS5 controller drift`**
+
+**Retrieval snapshot (titles or notes):**
+
+- 1 Pair Controller Analog Stick Drift Fix Mod for Xbox One PS4 PS5 Switch Pro Gamepad Game Handle Joystick Drift Repair Board (Black)
+- 2 x Analog Stick Drift Fix Mod Handle Rocker Adjusting Plate Game Handle Joystick Drift Repair Board for PS4 PS5 Xbox One Xbox Series X S Controller (Black)
+- 10pcs Gamepad Analog Stick Drift Fix Mod, Universal 3D Analog Joystick Drift Fix Mod, Black Easy Using Gamepad Joystick Drift Repair Board, for Game Controllers
+
+**Haiku's Answer:**
+
+*I found several great options to fix PS5 controller drift! You can choose from analog stick drift fix mod boards that are compatible with PS5 controllers. The most highly-rated option is the 10pcs Gamepad Analog Stick Drift Fix Mod (4.5/5 stars) by SHYEKYO, which offers universal compatibility and easy installation. Alternatively, there are 2-piece repair kits like those from LightFairy and Limentea (both 3.3/5 stars) that include replacement joystick sticks and adjustment plates to correct the drift issue.*
+
+**Opus's Answer:**
+
+**Evaluation:**
+
+So, it's an interesting answer. Claude understood the query in a very good way. The query is related to issues with a product, and Claude offered products that help with that issue. I think Claude might be performing as an actual salesman.
+
+#### Conclusions
+
+In short, for this task, Opus gives slightly better answers. It felt more convincing, more focused, and more concise. Latency was pretty similar, nothing noticeably different.
+
+That said, the gap isn’t big enough to justify choosing Opus. It’s better, sure, but not by much. And since Haiku is significantly cheaper, it makes more sense to go with Haiku.
+
+Honestly, for this kind of task, using a model as heavy as Opus feels like overkill. Its full potential just isn’t really being put to use here.
+
+---
 
 ## Step 2: Additional Feature — Option 3: Scale to >100k Products
 
