@@ -9,10 +9,6 @@ A retrieval-style search assistant over Amazon Video Games product data. Users s
 
 </details>
 
-## Disclaimer
-
-We know what the milestones asked for. We still went beyond a naive retrieval baseline and implemented a fuller RAG style pipeline. The optional additions are query expansion with Claude Haiku before search and cross-encoder re-ranking on the candidate pool. In the Streamlit app, reviewers can turn each of these off. We included them to explore and practice improvements that show up in real world RAG systems.
-
 ---
 
 ## Setup
@@ -31,7 +27,7 @@ data/raw/
 
 ```bash
 conda env create -f environment.yml
-conda activate 575_jleg_rag_env
+conda activate insightcart_venv
 ```
 
 ### 3. Build the pipeline
