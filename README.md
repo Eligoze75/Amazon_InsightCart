@@ -21,7 +21,7 @@ We know what the milestones asked for. We still went beyond a naive retrieval ba
 
 Download the **Video Games** category files from [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/) and place them here:
 
-```mermaid
+```text
 data/raw/
 ├── Video_Games.jsonl          # 4.6M customer reviews
 └── meta_Video_Games.jsonl     # 137K product listings
@@ -143,7 +143,7 @@ After retrieval and optional re-ranking, the app can call Claude Haiku a second 
 
 ## Project Structure
 
-```mermaid
+```text
 ├── data/
 │   ├── raw/                        # downloaded JSONL files (not tracked)
 │   ├── processed/
